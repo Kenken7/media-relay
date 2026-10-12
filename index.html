@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="ja"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<title>動画</title>
+<style>html,body{margin:0;height:100%;background:#000}#p,iframe{display:block;border:0;width:100%;height:100%}</style>
+</head><body>
+<div id="p"></div>
+<script>
+// 授業スライド（ローカルのHTML）から YouTube を再生するための中継ページ。
+// file:// のページに直接埋め込むと、参照元が無いので YouTube が「エラー153」を出す。ここを挟むと tk73.net が参照元になる。
+// スライド側からキー操作が届く（YouTubeと同じ：スペース/K 再生停止・←→ 5秒・J/L 10秒・↑↓ 音量・M 消音・C 字幕・0〜9 位置）。音量のつまみ（vols）も受ける。
+(function(){
+  var q=new URLSearchParams(location.search),v=q.get('v')||'',mir=q.get('m')==='1';   // m=1：発表者の手元用（音なし・聴衆用に合わせて動く）
+  if(!/^[\w-]{11}$/.test(v))return;
+  var player=null,tgt=null,tAt=0,ccOn=false;   // 字幕は最初は出さない（C で出し入れ）
+  window.onYouTubeIframeAPIReady=function(){
+    player=new YT.Player('p',{videoId:v,host:'https://www.youtube-nocookie.com',
+      // 音なしの側は表示だけなので、操作バー（シークバー・その他の動画など）を出さない
+      playerVars:{autoplay:1,rel:0,playsinline:1,mute:mir?1:0,controls:mir?0:1,disablekb:mir?1:0,iv_load_policy:3},
+      events:{onReady:function(e){if(mir)e.target.mute();e.target.playVideo();ccSet()},
+        // YouTube は字幕を自動で読み込むことがある。そのたびに、字幕オフなら外し直す
+        onApiChange:function(){if(!ccOn)ccSet()}}});
+  };
+  // 聴衆用は、今の位置と再生状態をスライド側へ知らせ続ける（発表者の手元の動画をそろえるため）
+  // 音なしの側も、自分の位置を mt として知らせる（スライド側は使わない。ずれの確認用）
+  setInterval(function(){if(player&&player.getCurrentTime&&parent!==window)
+    parent.postMessage(mir?{pvyt:1,mt:player.getCurrentTime(),mst:player.getPlayerState()}:{pvyt:1,t:player.getCurrentTime(),st:player.getPlayerState(),vol:player.getVolume(),mu:player.isMuted()},'*')},700);
+  // 字幕の出し入れ。YouTube は再生が始まってから字幕を読み込み直すことがあるので、オフの間は最初の15秒ほど繰り返し外す
+  function ccSet(){if(!player)return;
+    ['captions','cc'].forEach(function(m){try{if(ccOn){player.loadModule(m);player.setOption(m,'track',{languageCode:'ja'})}
+      else{player.setOption(m,'track',{});player.unloadModule(m)}}catch(e){}})}
+  // ※字幕が出ているかは YouTube から正しく読めない（外した後も「出ている」と返す）ので、状態は ccOn で持つ
+  var ccN=0,ccT=setInterval(function(){if(++ccN>15||ccOn)return clearInterval(ccT);ccSet()},1000);
+  var s=document.createElement('script');s.src='https://www.youtube.com/iframe_api';document.head.appendChild(s);
+  addEventListener('message',function(e){
+    var d=e.data;if(!player||!d||d.pvyt!==1||!player.getPlayerState)return;
+    var P=player,now=P.getCurrentTime(),len=P.getDuration()||0;
+    if(d.c==='toggle'){P.getPlayerState()===1?P.pauseVideo():P.playVideo()}
+    else if(d.c==='seek'){
+      // 続けて押したときは、前に飛んだ先から数える（getCurrentTime は飛び終わるまで古い値を返す）
+      var base=(Date.now()-tAt<1500&&tgt!==null)?tgt:now;
+      tgt=Math.max(0,Math.min(len,base+(+d.s||0)));tAt=Date.now();P.seekTo(tgt,true)}
+    else if(d.c==='pct'){P.seekTo(len*(+d.p||0)/10,true)}
+    else if(d.c==='sync'){   // 手元用：聴衆用の位置と再生状態に合わせる
+      // 親が再生中でなければ止める。位置は届くまでの遅れ（約0.3秒）を足して合わせる
+      // 止まっている間はぴったり合わせる（止めの合図が届くまでの間に子だけ進んだ分を戻す）。再生中は0.6秒以上ずれたら飛ぶ
+      var go=d.st===1||d.st===3,to=(+d.t||0)+(d.st===1?0.3:0);if(Math.abs(now-to)>(go?0.6:0.15))P.seekTo(to,true);
+      // 止めるのは親が「一時停止・終了」のときだけ。読み込み中（3）で止めると、YouTube が一時停止の画面（その他の動画）を出す
+      var s=P.getPlayerState();if(d.st===1||d.st===3){if(s!==1&&s!==3)P.playVideo()}else if((d.st===2||d.st===0)&&s===1)P.pauseVideo()}
+    else if(d.c==='cc'){ccOn=(typeof d.on==='boolean')?d.on:!ccOn;ccN=99;ccSet()}
+    else if(mir){}   // 音なしの側は、音量・消音を受けない
+    else if(d.c==='vols'){if(P.isMuted())P.unMute();P.setVolume(Math.max(0,Math.min(100,+d.v||0)))}
+    else if(d.c==='vol'){if(P.isMuted())P.unMute();P.setVolume(Math.max(0,Math.min(100,P.getVolume()+(+d.v||0))))}
+    else if(d.c==='mute'){P.isMuted()?P.unMute():P.mute()}
+  });
+})();
+</script>
+</body></html>
